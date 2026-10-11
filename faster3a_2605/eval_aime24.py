@@ -58,7 +58,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=40)
     parser.add_argument("--ks", default="1,2,4,8", help="pass@k values, comma-separated")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--prompt-style", choices=("base",), default="base")
+    parser.add_argument(
+        "--prompt-style",
+        choices=("base", "think", "fake_think"),
+        default="base",
+        help=(
+            "base uses the original problem/Answer prompt; think opens an assistant <think> block; "
+            "fake_think follows the chat template's empty-think prompt"
+        ),
+    )
     parser.add_argument("--torch-extensions-dir", default="")
     parser.add_argument("--progress-every", type=int, default=100)
     parser.add_argument("--verify-workers", type=int, default=1)
@@ -119,6 +127,17 @@ def copy_single_state_into_batch(batch_state: list[Any], row: int, single_state:
     batch_state[2][row : row + 1].copy_(single_state[2])
 
 
+def format_prompt(problem: str, prompt_style: str) -> str:
+    problem = problem.strip().replace("\r\n", "\n")
+    if prompt_style == "base":
+        return f"{problem}\n\nAnswer:"
+    if prompt_style == "think":
+        return f"User: {problem}\n\nAssistant: <think"
+    if prompt_style == "fake_think":
+        return f"User: {problem}\n\nAssistant: <think></think>\n"
+    raise ValueError(f"unknown prompt style: {prompt_style}")
+
+
 def build_prefill_cache(
     args: argparse.Namespace,
     tasks: list[Task],
@@ -130,8 +149,7 @@ def build_prefill_cache(
     cache = {}
     t0 = time.perf_counter()
     for done, task_idx in enumerate(task_indices, 1):
-        problem = tasks[task_idx].problem.strip().replace("\r\n", "\n")
-        prompt = f"{problem}\n\nAnswer:"
+        prompt = format_prompt(tasks[task_idx].problem, args.prompt_style)
         ids = [0] + tokenizer.encode(prompt)
         if len(ids) + args.max_new_tokens > args.ctx_limit:
             ids = ids[-max(1, args.ctx_limit - args.max_new_tokens) :]
